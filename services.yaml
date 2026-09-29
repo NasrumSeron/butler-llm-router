@@ -14,9 +14,9 @@ services:
   # Turn these OFF once the real bots are wired up.
 
   - name: calendar
-    url: http://127.0.0.1:9101
+    url: http://XXX.0.0.1:9101
     enabled: true
 
   - name: finance
-    url: http://127.0.0.1:9102
+    url: http://XXX.0.0.1:9102
     enabled: true
