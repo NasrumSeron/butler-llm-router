@@ -1,0 +1,37 @@
+# docker-compose.yml — Butler on a home server (NAS).
+#
+# `bots-shared` is an EXTERNAL network: created once by hand, then joined by
+# every bot's compose project. That's what lets Butler and the calendar bot —
+# which live in separate folders with separate compose files — see each other.
+#
+# Create it once, before the first `up`:
+#
+#   docker network create --opt com.docker.network.driver.mtu=1460 bots-shared
+#
+# The MTU 1460 is carried over from the calendar bot's original network, where
+# Docker's default 1500 made large HTTPS requests silently hang on this
+# connection. Do not drop it.
+#
+# Containers on this network reach each other by SERVICE NAME
+# (http://calendar-api:8080). Nothing on it is reachable from your home LAN,
+# your router, or the internet. Butler publishes no ports at all, because it
+# dials out to Telegram rather than being dialled into.
+
+services:
+
+  butler:
+    build: .
+    container_name: butler
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - bots-shared
+    # No `ports:` section. On purpose. Nothing listens for inbound traffic.
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+networks:
+  bots-shared:
+    external: true

@@ -1,0 +1,28 @@
+# services.docker.yaml — Butler's address book INSIDE Docker.
+#
+# Why a second file: on a laptop the stub bots are at 127.0.0.1:9101.
+# Inside a container, 127.0.0.1 means THE BUTLER CONTAINER ITSELF — so those
+# URLs would connect to nothing.
+#
+# On the shared Docker network, containers reach each other by CONTAINER NAME.
+# Docker's internal DNS resolves "calendar-api" to that container. Nothing here
+# is exposed to your home network.
+#
+# Butler picks this file up when .env sets BUTLER_SERVICES_FILE=services.docker.yaml.
+# This file is COPY'd into the image, so changing it needs a rebuild, not a restart.
+
+services:
+
+  # The calendar bot's Butler adapter (service.py in telegram-icloud-calendar-bot).
+  # `calendar-api` is the container_name in that repo's docker-compose.yml.
+  - name: calendar
+    url: http://calendar-api:8080
+    enabled: true
+
+  # My own deployment also registers two private bots here (a PC power switch
+  # and a content service). They are not part of this repository. Any service
+  # that implements CONTRACT.md can be added the same way:
+  #
+  # - name: pc
+  #   url: http://pc-api:8080
+  #   enabled: true

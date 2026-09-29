@@ -1,0 +1,22 @@
+# services.yaml — Butler's address book.
+#
+# THIS IS THE FILE YOU EDIT TO ADD A BOT. Nothing else. (Laptop / stub version;
+# the Docker version is services.docker.yaml.)
+#
+# Butler asks each of these for /capabilities at startup, so you do NOT list
+# what the bot can do here — the bot tells Butler that itself.
+#
+# enabled: false  keeps an entry without Butler trying to reach it.
+
+services:
+
+  # --- Stub services, for offline testing on your laptop. -------------------
+  # Turn these OFF once the real bots are wired up.
+
+  - name: calendar
+    url: http://127.0.0.1:9101
+    enabled: true
+
+  - name: finance
+    url: http://127.0.0.1:9102
+    enabled: true
