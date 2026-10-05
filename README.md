@@ -79,7 +79,7 @@ Cost is visible: `/status` shows routing calls, chat calls and how many messages
 |---|---|---|
 | `tests/test_router_offline.py` | Routing guarantees with a fake LLM: command/keyword/LLM order, thresholds and margin, time guard (incl. no false matches), param cleaning, internal-action handling, follow-up locks and release, allowlist, error handling | **101 checks** |
 | `tests/test_integration_stubs.py` | The full stack over real HTTP against stub bots (`stubs/stub_service.py`), incl. a bot going down | **19 checks** |
-| `tests/test_web.py` | The HTTP front door (`unittest`) | **18 tests** |
+| `tests/test_web.py` | The HTTP front door (`unittest`), incl. input limits and fixed error text | **27 tests** |
 | `tests/test_calendar_integration.py` | Butler ↔ the real calendar adapter in a subprocess, Gemini and iCloud faked | **40 checks** (runs if the calendar repo is cloned alongside) |
 | `tests/live/run_goldset_live.py` | Routing accuracy against the real model on a labelled set | see below |
 
