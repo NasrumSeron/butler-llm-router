@@ -37,6 +37,20 @@ import config
 
 log = logging.getLogger("butler.web")
 
+# Input limits (Gate G #14). Telegram's own limits: 4096 chars per message,
+# 64 bytes per callback_data.
+MAX_BODY = 16_384
+MAX_MESSAGE = 4096
+MAX_DATA_BYTES = 64
+MAX_NAME = 64
+_DRAIN_LIMIT = 65_536           # unread body we will swallow so the client sees our reply
+BAD_REQUEST = "Bad request."
+INTERNAL_ERROR = "Butler hit an internal error."
+
+
+class BadRequest(Exception):
+    """Raised for malformed input. Detail never reaches the client."""
+
 # One lock for all of Butler. Telegram's loop and an HTTP request must never be
 # inside handle_message() at the same time — they mutate the same dicts.
 _lock = threading.Lock()
@@ -78,13 +92,26 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _body(self) -> dict:
-        length = int(self.headers.get("Content-Length", "0") or 0)
+        """Parse the JSON object body, or raise BadRequest (never returns a non-dict)."""
+        try:
+            length = int(self.headers.get("Content-Length", "0") or 0)
+        except ValueError:
+            raise BadRequest()
+        if length < 0:
+            raise BadRequest()
+        if length > MAX_BODY:
+            if length <= _DRAIN_LIMIT:
+                self.rfile.read(length)
+            raise BadRequest()
         if not length:
             return {}
         try:
-            return json.loads(self.rfile.read(length))
-        except json.JSONDecodeError:
-            return {}
+            body = json.loads(self.rfile.read(length))
+        except (ValueError, RecursionError):     # JSONDecodeError + bad UTF-8
+            raise BadRequest()
+        if not isinstance(body, dict):
+            raise BadRequest()
+        return body
 
     @staticmethod
     def _user_id() -> int:
@@ -113,25 +140,32 @@ class Handler(BaseHTTPRequestHandler):
         if self.path not in ("/chat", "/callback"):
             return self._send(404, {"ok": False, "error": "not found"})
 
-        body = self._body()
         user_id = self._user_id()
 
         try:
+            body = self._body()
+            if self.path == "/chat":
+                message = str(body.get("message") or "").strip()
+                if not message:
+                    return self._send(200, {"ok": False, "error": "Say something."})
+                if len(message) > MAX_MESSAGE:
+                    raise BadRequest()
+            else:
+                data = str(body.get("data") or "")
+                if not data:
+                    return self._send(200, {"ok": False, "error": "No button data."})
+                if len(data.encode("utf-8")) > MAX_DATA_BYTES:
+                    raise BadRequest()
             with _lock:
                 if self.path == "/chat":
-                    message = str(body.get("message") or "").strip()
-                    if not message:
-                        return self._send(200, {"ok": False, "error": "Say something."})
                     reply = self.butler.handle_message(user_id, message)
                 else:
-                    data = str(body.get("data") or "")
-                    if not data:
-                        return self._send(200, {"ok": False, "error": "No button data."})
                     reply = self.butler.handle_callback(user_id, data)
-        except Exception as exc:                       # never leak a stack trace
+        except BadRequest:
+            return self._send(200, {"ok": False, "error": BAD_REQUEST})
+        except Exception:                              # never leak a stack trace
             log.exception("web request failed")
-            return self._send(200, {"ok": False,
-                                    "error": f"Butler hit an internal error: {exc}"})
+            return self._send(200, {"ok": False, "error": INTERNAL_ERROR})
 
         return self._send(200, reply_json(reply))
 
@@ -158,23 +192,30 @@ class Handler(BaseHTTPRequestHandler):
         the same id the Telegram side uses. A browser-supplied user_id would
         be exactly the identity-spoofing anti-pattern to avoid.
         """
-        body = self._body()
-        service = str(body.get("service") or "").strip()
-        action = str(body.get("action") or "").strip()
-        params = body.get("params") or {}
-        if not service or not action:
-            return self._send(200, {"ok": False,
-                                    "error": "Needs a service and an action."})
         try:
+            body = self._body()
+            service = str(body.get("service") or "").strip()
+            action = str(body.get("action") or "").strip()
+            params = body.get("params")
+            if params is None:
+                params = {}
+            original = str(body.get("message") or "")
+            if not service or not action:
+                return self._send(200, {"ok": False,
+                                        "error": "Needs a service and an action."})
+            if (len(service) > MAX_NAME or len(action) > MAX_NAME
+                    or not isinstance(params, dict) or len(original) > MAX_MESSAGE):
+                raise BadRequest()
             with _lock:
                 res = self.butler.registry.invoke(
                     service_name=service, action=action, params=params,
                     user_id=self._user_id(),
-                    original_message=str(body.get("message") or ""))
-        except Exception as exc:
+                    original_message=original)
+        except BadRequest:
+            return self._send(200, {"ok": False, "error": BAD_REQUEST})
+        except Exception:
             log.exception("invoke failed")
-            return self._send(200, {"ok": False,
-                                    "error": f"Butler hit an internal error: {exc}"})
+            return self._send(200, {"ok": False, "error": INTERNAL_ERROR})
 
         if not res.ok:
             return self._send(200, {"ok": False, "error": res.error or "That failed."})

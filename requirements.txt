@@ -1,4 +1,4 @@
 # Butler — deliberately tiny. Three dependencies, all doing one obvious job.
-requests==2.32.3        # every HTTP call: Telegram, and the bots
+requests==2.33.0        # every HTTP call: Telegram, and the bots
 PyYAML==6.0.2           # reads services.yaml
 google-genai==1.29.0    # the routing model

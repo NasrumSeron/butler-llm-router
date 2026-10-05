@@ -280,6 +280,106 @@ class WebTest(unittest.TestCase):
         self.assertNotIn("invoke", vars(self.butler.registry),
                          "a test left a stand-in on the registry instance")
 
+    # -- input validation (Gate G #14) ---------------------------------------
+
+    BAD = {"ok": False, "error": "Bad request."}
+
+    def raw_post(self, path, content_length, payload=b""):
+        """POST with an arbitrary Content-Length header (urllib won't let us lie)."""
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            conn.putrequest("POST", path)
+            conn.putheader("Content-Type", "application/json")
+            conn.putheader("Content-Length", content_length)
+            conn.endheaders()
+            if payload:
+                conn.send(payload)
+            resp = conn.getresponse()
+            return resp.status, json.loads(resp.read())
+        finally:
+            conn.close()
+
+    def _alive(self):
+        self.assertTrue(self.get("/health")["ok"], "server died on bad input")
+
+    def test_non_numeric_content_length_is_refused(self):
+        for path in ("/chat", "/callback", "/invoke"):
+            with self.subTest(path=path):
+                status, body = self.raw_post(path, "abc")
+                self.assertEqual((status, body), (200, self.BAD))
+        self._alive()
+
+    def test_negative_content_length_is_refused(self):
+        for path in ("/chat", "/callback", "/invoke"):
+            with self.subTest(path=path):
+                status, body = self.raw_post(path, "-5")
+                self.assertEqual((status, body), (200, self.BAD))
+        self._alive()
+
+    def test_non_object_json_is_refused(self):
+        for path in ("/chat", "/callback", "/invoke"):
+            for payload in (b"[]", b'"x"', b"5", b"null"):
+                with self.subTest(path=path, payload=payload):
+                    status, body = self.raw_post(path, str(len(payload)), payload)
+                    self.assertEqual((status, body), (200, self.BAD))
+        self._alive()
+
+    def test_body_over_16kb_is_refused(self):
+        big = json.dumps({"message": "a" * 20_000}).encode()
+        self.assertGreater(len(big), 16_384)
+        for path in ("/chat", "/callback", "/invoke"):
+            with self.subTest(path=path):
+                status, body = self.raw_post(path, str(len(big)), big)
+                self.assertEqual((status, body), (200, self.BAD))
+        self._alive()
+
+    def test_message_over_4096_chars_is_refused(self):
+        self.assertEqual(self.chat("a" * 4097), self.BAD)
+        self.assertTrue(self.chat("a" * 4096)["ok"], "4096 chars is the limit, not 4095")
+        self._alive()
+
+    def test_callback_data_over_64_bytes_is_refused(self):
+        self.assertEqual(self.post("/callback", {"data": "x" * 65}), self.BAD)
+        self.assertEqual(self.post("/callback", {"data": "\u00e9" * 33}), self.BAD)  # 66 bytes
+        self._alive()
+
+    def test_invoke_field_limits(self):
+        bad_bodies = (
+            {"service": "s" * 65, "action": "x"},
+            {"service": "pc", "action": "a" * 65},
+            {"service": "pc", "action": "x", "params": []},
+            {"service": "pc", "action": "x", "params": "text"},
+            {"service": "pc", "action": "x", "message": "m" * 4097},
+        )
+        for body in bad_bodies:
+            with self.subTest(body={k: str(v)[:12] for k, v in body.items()}):
+                self.assertEqual(self.post("/invoke", body), self.BAD)
+        self._alive()
+
+    def test_internal_error_reply_has_no_exception_text(self):
+        def boom(*a, **k):
+            raise RuntimeError("kaboom-SECRET")
+        want = {"ok": False, "error": "Butler hit an internal error."}
+        self.butler.handle_message = boom
+        self.butler.handle_callback = boom
+        try:
+            self.assertEqual(self.chat("hello"), want)
+            self.assertEqual(self.post("/callback", {"data": "x"}), want)
+        finally:
+            vars(self.butler).pop("handle_message", None)
+            vars(self.butler).pop("handle_callback", None)
+
+    def test_invoke_internal_error_reply_has_no_exception_text(self):
+        def boom(**k):
+            raise RuntimeError("kaboom-SECRET")
+        self.butler.registry.invoke = boom
+        try:
+            r = self.post("/invoke", {"service": "pc", "action": "pc_status"})
+        finally:
+            self._unpatch_invoke()
+        self.assertEqual(r, {"ok": False, "error": "Butler hit an internal error."})
+
     # -- concurrency -------------------------------------------------------
 
     def test_parallel_requests_do_not_corrupt_butler(self):
